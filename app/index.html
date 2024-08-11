@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping List</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <h1>xml configuration</h1>
+        <p class="slug">This is a simple kdm target parameters list.</p>
+    </header>
+    <main hx-get="/api/items" hx-trigger="load,newItem from:body" hx-target="#all-items" hx-swap="innerHtml">
+        <div id="all-items" hx-confirm="Do you really want to delete this item?" hx-target="closest .item"
+            hx-swap="outerHTML swap:1s">
+        </div>
+        <h2>Add a new item to the list</h2>
+        <form hx-post="/api/items" hx-ext="json-enc" hx-swap="none" hx-on::after-request="this.reset()">
+            <input type="text" name="value" placeholder="Add Item" maxlength="36">
+            <button type="submit">Add</button>
+        </form>
+    </main>
+    <script src="/htmx.min.js"></script>
+    <script src="json-enc.js"></script>
+</body>
+</html>

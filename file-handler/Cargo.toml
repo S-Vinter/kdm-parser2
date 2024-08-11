@@ -1,0 +1,9 @@
+[package]
+name = "file-handler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quick-xml = "*"
+rust_xlsxwriter = "*"
+rusqlite = { version = "0.29.0", features = ["bundled"] }
