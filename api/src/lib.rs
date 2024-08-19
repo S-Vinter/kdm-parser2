@@ -17,8 +17,6 @@ fn handle_api(req: Request) -> Result<impl IntoResponse> {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Item {
-    // #[serde(skip_deserializing)]
-    // id: i64,
     value: String,
 }
 
