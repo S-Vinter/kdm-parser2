@@ -41,7 +41,13 @@ impl KeysToFind {
 
         for (counter, parameter) in parameters.iter().enumerate() {
             if parameter.to_string() != String::from("VALUE") {
-                keys_values.insert(KeyMetadata {value: parameter.to_string(), index: counter.try_into().unwrap()}, String::new());
+                keys_values.insert(
+                    KeyMetadata {
+                        value: parameter.to_string(),
+                        index: counter.try_into().unwrap(),
+                    },
+                    String::new(),
+                );
             }
         }
         // keys_values.insert(String::from("ContentTitleText"), String::new());
@@ -62,18 +68,22 @@ impl KeysToFind {
 
     pub fn build_key_from_name(&self, key: &str) -> Option<KeyMetadata> {
         let mut key_iter: Vec<KeyMetadata> = self.keys_values.clone().into_keys().collect();
-        key_iter.sort_by(|a, b| {a.index.cmp(&b.index)});
+        key_iter.sort_by(|a, b| a.index.cmp(&b.index));
 
         for (counter, key_iter) in key_iter.iter().enumerate() {
             if key_iter.value == key.to_string() {
-                return Some(KeyMetadata{value: key.to_string(), index: counter.try_into().unwrap()});
+                return Some(KeyMetadata {
+                    value: key.to_string(),
+                    index: counter.try_into().unwrap(),
+                });
             }
         }
         return None;
     }
 
     pub fn update(&mut self, key: &str, value: &str) {
-        self.keys_values.insert(self.build_key_from_name(key).unwrap(), value.to_string());
+        self.keys_values
+            .insert(self.build_key_from_name(key).unwrap(), value.to_string());
     }
 
     pub fn get(&self) -> &HashMap<KeyMetadata, String> {
@@ -87,7 +97,7 @@ impl KeysToFind {
 
     pub fn keys(&self) -> Vec<&KeyMetadata> {
         let mut keys: Vec<&KeyMetadata> = self.keys_values.keys().collect();
-        keys.sort_by(|a, b| {a.index.cmp(&b.index)});
+        keys.sort_by(|a, b| a.index.cmp(&b.index));
         return keys;
     }
 }
@@ -101,30 +111,28 @@ fn write_to_excel() {
 
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
 
-    let mut stmt = connection
-        .prepare("SELECT * FROM ITEMS")
-        .unwrap();
+    let column_stmt = connection.prepare("SELECT * FROM ITEMS").unwrap();
+    let mut row_stmt = connection.prepare("SELECT * FROM ITEMS").unwrap();
 
-    let columns_names = stmt.column_names();
-    
+    let columns_names = column_stmt.column_names();
+
     for (counter, name) in columns_names.iter().enumerate() {
         if name.to_owned() != "ID" {
             let column_number = u16::try_from(counter).unwrap() - 1;
             worksheet.write(0, column_number, name.to_string()).unwrap();
         }
     }
-    
-    let mut rows = stmt.query([]).unwrap();
+
+    let mut rows = row_stmt.query([]).unwrap();
     while let Some(row) = rows.next().unwrap() {
         let row_number: u32 = row.get(0).unwrap();
-        let name: String = row.get(1).unwrap();
-        let start_validity: String = row.get(2).unwrap();
-        let end_validity: String = row.get(3).unwrap();
-        let server_name: String = row.get(4).unwrap();
-        worksheet.write(row_number, 0, name).unwrap();
-        worksheet.write(row_number, 1, start_validity).unwrap();
-        worksheet.write(row_number, 2, end_validity).unwrap();
-        worksheet.write(row_number, 3, server_name).unwrap();
+        for (index, _column) in columns_names.iter().enumerate() {
+            if index+1 == columns_names.len() {
+                break;
+            }
+            let value: String = row.get(index+1).unwrap();
+            worksheet.write(row_number, index.try_into().unwrap(), value).unwrap();
+        }
     }
 
     // Save the workbook
@@ -180,16 +188,19 @@ fn main() {
             buf.clear();
         }
 
-        let keys = keys_to_find.keys();
+        let mut command = format!("INSERT INTO ITEMS VALUES ({}", counter + 1);
+        let mut keys = keys_to_find.keys();
+        keys.sort_by(|a, b| a.index.cmp(&b.index));
+
+        for key in keys.iter() {
+            if key.value != String::from("ID") {
+                command.push_str(&format!(", {:?}", keys_to_find.get_value(&key.value)));
+            }
+        }
+        command.push(')');
+
         let mut stmt = connection
-            .prepare(&format!(
-                "INSERT INTO ITEMS VALUES ({}, {:?}, {:?}, {:?}, {:?});",
-                counter+1,
-                keys_to_find.get_value(&keys[0].value),
-                keys_to_find.get_value(&keys[1].value),
-                keys_to_find.get_value(&keys[2].value),
-                keys_to_find.get_value(&keys[3].value)
-            ))
+            .prepare(&command)
             .unwrap();
         stmt.execute([]);
     }
