@@ -4,6 +4,7 @@ use glob::glob;
 use quick_xml::{events::Event, Reader};
 use rusqlite::{Connection, Result};
 use rust_xlsxwriter::Workbook;
+use table::Key;
 
 fn load_db() -> Vec<String> {
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
@@ -22,9 +23,15 @@ fn load_db() -> Vec<String> {
     names
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct KeyMetadata {
+    pub value: String,
+    pub index: u32,
+}
+
 #[derive(Debug)]
 pub struct KeysToFind {
-    keys_values: HashMap<String, String>,
+    keys_values: HashMap<KeyMetadata, String>,
 }
 
 impl KeysToFind {
@@ -32,9 +39,9 @@ impl KeysToFind {
         let parameters = load_db();
         let mut keys_values = HashMap::new();
 
-        for parameter in parameters {
-            if parameter != String::from("VALUE") {
-                keys_values.insert(parameter, String::new());
+        for (counter, parameter) in parameters.iter().enumerate() {
+            if parameter.to_string() != String::from("VALUE") {
+                keys_values.insert(KeyMetadata {value: parameter.to_string(), index: counter.try_into().unwrap()}, String::new());
             }
         }
         // keys_values.insert(String::from("ContentTitleText"), String::new());
@@ -45,19 +52,43 @@ impl KeysToFind {
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
-        self.keys_values.contains_key(key)
+        for key_iter in self.keys_values.iter() {
+            if key_iter.0.value == key.to_string() {
+                return true;
+            }
+        }
+        return false;
     }
 
-    pub fn update(&mut self, key: &str, value: &str) -> Option<String> {
-        self.keys_values.insert(key.to_string(), value.to_string())
+    pub fn build_key_from_name(&self, key: &str) -> Option<KeyMetadata> {
+        let mut key_iter: Vec<KeyMetadata> = self.keys_values.clone().into_keys().collect();
+        key_iter.sort_by(|a, b| {a.index.cmp(&b.index)});
+
+        for (counter, key_iter) in key_iter.iter().enumerate() {
+            if key_iter.value == key.to_string() {
+                return Some(KeyMetadata{value: key.to_string(), index: counter.try_into().unwrap()});
+            }
+        }
+        return None;
     }
 
-    pub fn get(&self) -> &HashMap<String, String> {
+    pub fn update(&mut self, key: &str, value: &str) {
+        self.keys_values.insert(self.build_key_from_name(key).unwrap(), value.to_string());
+    }
+
+    pub fn get(&self) -> &HashMap<KeyMetadata, String> {
         &self.keys_values
     }
 
     pub fn get_value(&self, key: &str) -> String {
-        self.keys_values.get(key).unwrap().to_string()
+        let full_key = self.build_key_from_name(key).unwrap();
+        self.keys_values.get(&full_key).unwrap().to_string()
+    }
+
+    pub fn keys(&self) -> Vec<&KeyMetadata> {
+        let mut keys: Vec<&KeyMetadata> = self.keys_values.keys().collect();
+        keys.sort_by(|a, b| {a.index.cmp(&b.index)});
+        return keys;
     }
 }
 
@@ -85,7 +116,6 @@ fn write_to_excel() {
     
     let mut rows = stmt.query([]).unwrap();
     while let Some(row) = rows.next().unwrap() {
-        println!("row: {:?}", row);
         let row_number: u32 = row.get(0).unwrap();
         let name: String = row.get(1).unwrap();
         let start_validity: String = row.get(2).unwrap();
@@ -96,16 +126,6 @@ fn write_to_excel() {
         worksheet.write(row_number, 2, end_validity).unwrap();
         worksheet.write(row_number, 3, server_name).unwrap();
     }
-
-    // // Write some data
-    // for (counter, key_value) in keys_to_find.get().iter().enumerate() {
-    //     worksheet
-    //         .write_string(0, counter.try_into().unwrap(), key_value.0)
-    //         .unwrap();
-    //     worksheet
-    //         .write_string(1, counter.try_into().unwrap(), key_value.1)
-    //         .unwrap();
-    // }
 
     // Save the workbook
     workbook.save("kdm-info.xlsx").unwrap();
@@ -147,7 +167,7 @@ fn main() {
                     // Process text content
                     if !current_key.is_empty() {
                         let text_content = e.unescape().unwrap();
-                        keys_to_find.update(&current_key, &text_content).unwrap();
+                        keys_to_find.update(&current_key, &text_content);
                         current_key = String::new();
                     }
                 }
@@ -160,14 +180,15 @@ fn main() {
             buf.clear();
         }
 
+        let keys = keys_to_find.keys();
         let mut stmt = connection
             .prepare(&format!(
                 "INSERT INTO ITEMS VALUES ({}, {:?}, {:?}, {:?}, {:?});",
                 counter+1,
-                keys_to_find.get_value("ContentTitleText"),
-                keys_to_find.get_value("ContentKeysNotValidBefore"),
-                keys_to_find.get_value("ContentKeysNotValidAfter"),
-                keys_to_find.get_value("X509SubjectName")
+                keys_to_find.get_value(&keys[0].value),
+                keys_to_find.get_value(&keys[1].value),
+                keys_to_find.get_value(&keys[2].value),
+                keys_to_find.get_value(&keys[3].value)
             ))
             .unwrap();
         stmt.execute([]);
