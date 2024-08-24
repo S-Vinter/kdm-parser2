@@ -9,3 +9,10 @@ CREATE TABLE IF NOT EXISTS key_value (
   UNIQUE(ID)
   UNIQUE(key)
 );
+
+CREATE TABLE IF NOT EXISTS server_id (
+  server TEXT NOT NULL PRIMARY KEY,
+  ID INTEGER,
+  UNIQUE(ID)
+  UNIQUE(server)
+);

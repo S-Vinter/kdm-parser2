@@ -23,13 +23,13 @@
             <button type="submit">Add</button>
         </form>
         <div hx-get="/api/servers" hx-trigger="load,newServer from:body" hx-target="#all-servers" hx-swap="innerHtml"> </div>
-        <div id="all-servers" hx-confirm="Do you really want to delete this server?" hx-target="closest .item"
+        <div id="all-servers" hx-confirm="Do you really want to delete this server?" hx-target="closest .server"
             hx-swap="outerHTML swap:1s">
         </div>
         <h2>Add a new server to the list</h2>
         <form hx-post="/api/servers" hx-ext="json-enc" hx-swap="none" hx-on::after-request="this.reset()">
-            <input type="text" name="server-name" placeholder="Add server's name" maxlength="36">
-            <input type="text" name="server-number" placeholder="Add server's serial number" maxlength="36">
+            <input type="text" name="name" placeholder="Add server's name" maxlength="36">
+            <input type="text" name="serial_number" placeholder="Add server's serial number" maxlength="36">
             <button type="submit">AddServer</button>
         </form>
     </main>

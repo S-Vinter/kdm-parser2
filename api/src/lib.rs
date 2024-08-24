@@ -12,9 +12,9 @@ fn handle_api(req: Request) -> Result<impl IntoResponse> {
     r.post("/api/items", add_new);
     r.get("/api/items", get_all);
     r.delete("/api/items/:value", delete_one);
-    r.post("/api/servers", add_to_server);
+    r.post("/api/servers", add_server);
     r.get("/api/servers", get_server);
-    r.delete("/api/servers", delete_from_server);
+    r.delete("/api/servers/:name", delete_from_server);
     Ok(r.handle(req))
 }
 
@@ -27,7 +27,6 @@ struct Item {
 
 impl Html for Item {
     fn to_html_string(&self) -> String {
-        println!("value2: {:?}", self.value2);
         Container::new(ContainerType::Div)
             .with_attributes(vec![
                 ("class", "item"),
@@ -155,17 +154,76 @@ fn delete_one(_req: Request, params: Params) -> Result<impl IntoResponse> {
     })
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct Server {
+    pub name: String,
+    pub serial_number: String,
+}
+
+impl Html for Server {
+    fn to_html_string(&self) -> String {
+        Container::new(ContainerType::Div)
+            .with_attributes(vec![
+                ("class", "server"),
+                ("name", format!("server-{}", &self.name).as_str()),
+                ("serial_number", format!("server-{}", &self.serial_number).as_str()),
+            ])
+            .with_container(
+                Container::new(ContainerType::Div)
+                    .with_attributes(vec![("class", "name")])
+                    .with_raw(format!("{}: {}", &self.name, &self.serial_number)),
+            )
+            .with_container(
+                Container::new(ContainerType::Div)
+                    .with_attributes(vec![
+                        ("class", "delete-server"),
+                        ("hx-delete", format!("/api/servers/{}", &self.name).as_str()),
+                    ])
+                    .with_raw("❌"),
+            )
+            .to_html_string()
+    }
+}
+
 fn get_server(_r: Request, _p: Params) -> Result<impl IntoResponse> {
-    println!("get server");
+    let connection = Connection::open_default()?;
+    let row_set = connection.execute("SELECT * FROM server_id", &[])?;
+
+    let servers = row_set.rows.into_iter().map(|row| {
+        let name = row.get::<&str>(0).unwrap();
+        let serial_number = row.get::<u32>(1).unwrap();
+        Server {
+            name: name.to_string(),
+            serial_number: serial_number.to_string(),
+        }
+    }).map(|server| server.to_html_string())
+    .reduce(|acc, e| format!("{} {}", acc, e))
+    .unwrap_or(String::from(""));
+    
     Ok(Response::builder()
         .status(200)
         .header("Content-Type", "text/html")
-        .body(())
+        .body(servers)
         .build())
 }
 
-fn add_to_server(_req: Request, params: Params) -> Result<impl IntoResponse> {
-    println!("add to server");
+fn add_server(req: Request, _params: Params) -> Result<impl IntoResponse> {
+    let Ok(server): Result<Server> =
+        serde_json::from_reader(req.body()).with_context(|| "Error while deserializing payload")
+    else {
+        println!("Invalid payload");
+        return Ok(Response::new(400, "Invalid payload received"));
+    };
+
+    let connection = Connection::open_default()?;
+    let command = format!(
+        "INSERT INTO server_id (server, id) VALUES({:?}, {:?}) RETURNING *;",
+        server.name, server.serial_number.parse::<u32>().unwrap()
+    );
+    if let core::result::Result::Err(err) = connection.execute(&command, &[]) {
+        println!("error: {}", err);
+    }
+
     Ok(Response::builder()
         .status(200)
         .header("HX-Trigger", "newServer")
@@ -174,5 +232,6 @@ fn add_to_server(_req: Request, params: Params) -> Result<impl IntoResponse> {
 }
 
 fn delete_from_server(_req: Request, params: Params) -> Result<impl IntoResponse> {
+    println!("delete from server");
     Ok(Response::new(200, ()))
 }
