@@ -10,17 +10,26 @@ fn load_db() -> Vec<String> {
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
 
     let mut stmt = connection
-        .prepare("SELECT * FROM PRAGMA_TABLE_INFO('ITEMS')")
+        .prepare("SELECT * FROM key_value")
         .unwrap();
 
     let mut rows = stmt.query([]).unwrap();
 
-    let mut names: Vec<String> = Vec::new();
+    let mut names: Vec<(u32, String)> = Vec::new();
     while let Some(row) = rows.next().unwrap() {
-        names.push(row.get(1).unwrap());
+        let index: u32 = row.get(1).unwrap();
+        names.push((index, row.get(0).unwrap()));
     }
 
-    names
+    names.sort_by(|a, b| a.0.cmp(&b.0));
+    println!("{:?}", names);
+
+    let mut names_sorted = vec![];
+    for name in names {
+        names_sorted.push(name.1);
+    }
+
+    names_sorted
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -50,10 +59,6 @@ impl KeysToFind {
                 );
             }
         }
-        // keys_values.insert(String::from("ContentTitleText"), String::new());
-        // keys_values.insert(String::from("ContentKeysNotValidBefore"), String::new());
-        // keys_values.insert(String::from("ContentKeysNotValidAfter"), String::new());
-        // keys_values.insert(String::from("X509SubjectName"), String::new());
         Self { keys_values }
     }
 
@@ -111,23 +116,24 @@ fn write_to_excel() {
 
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
 
-    let column_stmt = connection.prepare("SELECT * FROM ITEMS").unwrap();
+    let mut column_stmt = connection.prepare("SELECT * FROM key_value").unwrap();
     let mut row_stmt = connection.prepare("SELECT * FROM ITEMS").unwrap();
 
-    let columns_names = column_stmt.column_names();
-
-    for (counter, name) in columns_names.iter().enumerate() {
-        if name.to_owned() != "ID" {
-            let column_number = u16::try_from(counter).unwrap() - 1;
-            worksheet.write(0, column_number, name.to_string()).unwrap();
-        }
+    let mut columns_names = column_stmt.query([]).unwrap();
+    let mut columns_vec = vec![];
+    let mut column_number = 0;
+    while let Some(row) = columns_names.next().unwrap() {
+        let value: String = row.get(2).unwrap();
+        columns_vec.push(value.clone());
+        worksheet.write(0, column_number, value).unwrap();
+        column_number+=1;
     }
 
     let mut rows = row_stmt.query([]).unwrap();
     while let Some(row) = rows.next().unwrap() {
         let row_number: u32 = row.get(0).unwrap();
-        for (index, _column) in columns_names.iter().enumerate() {
-            if index+1 == columns_names.len() {
+        for (index, _column) in columns_vec.iter().enumerate() {
+            if index == columns_vec.len() {
                 break;
             }
             let value: String = row.get(index+1).unwrap();
@@ -141,7 +147,6 @@ fn write_to_excel() {
 
 fn main() {
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
-    load_db();
 
     let mut files = Vec::new();
     // Open the XML file
@@ -159,6 +164,7 @@ fn main() {
         let mut buf = Vec::new();
 
         let mut keys_to_find = KeysToFind::new();
+        println!("keys_to_find: {:?}", keys_to_find);
         let mut current_key = String::new();
 
         // Read XML events from the reader
@@ -175,6 +181,7 @@ fn main() {
                     // Process text content
                     if !current_key.is_empty() {
                         let text_content = e.unescape().unwrap();
+                        println!("{}: {}", current_key, text_content);
                         keys_to_find.update(&current_key, &text_content);
                         current_key = String::new();
                     }
@@ -197,6 +204,7 @@ fn main() {
                 command.push_str(&format!(", {:?}", keys_to_find.get_value(&key.value)));
             }
         }
+        println!("command: {:?}", command);
         command.push(')');
 
         let mut stmt = connection
