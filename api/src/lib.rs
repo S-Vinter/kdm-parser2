@@ -233,5 +233,25 @@ fn add_server(req: Request, _params: Params) -> Result<impl IntoResponse> {
 
 fn delete_from_server(_req: Request, params: Params) -> Result<impl IntoResponse> {
     println!("delete from server");
-    Ok(Response::new(200, ()))
+
+    let Some(name) = params.get("name") else {
+        return Ok(Response::new(404, "Missing identifier"));
+    };
+
+    let connection = Connection::open_default()?;
+
+    let name = name.replace("%20", " ");
+
+    let command = format!("DELETE FROM server_id WHERE \"server\"={:?}", name);
+    Ok(match connection.execute(&command, &[]) {
+        // HTMX requires status 200 instead of 204
+        Ok(_) => Response::new(200, ()),
+        Err(e) => {
+            println!("Error while deleting item: {}", e);
+            Response::builder()
+                .status(500)
+                .body("Error while deleting item")
+                .build()
+        }
+    })
 }
