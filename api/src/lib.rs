@@ -20,9 +20,11 @@ fn handle_api(req: Request) -> Result<impl IntoResponse> {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Item {
+    index: String,
     value: String,
     value2: String,
-    index: String,
+    action: String,
+    additional: String,
 }
 
 impl Html for Item {
@@ -83,6 +85,8 @@ fn get_all(_r: Request, _p: Params) -> Result<impl IntoResponse> {
                 value,
                 value2,
                 index: String::new(),
+                action: String::new(),
+                additional: String::new(),
             }
         })
         .map(|item| item.to_html_string())
@@ -106,6 +110,9 @@ fn add_new(req: Request, _params: Params) -> Result<impl IntoResponse> {
 
     let connection = Connection::open_default()?;
 
+    println!("action: {:?}", item.action);
+    println!("additional: {:?}", item.additional);
+
     connection.execute("BEGIN TRANSACTION;", &[])?;
     let command = format!("ALTER TABLE ITEMS ADD {:?} VARCHAR(20);", item.value);
     if let core::result::Result::Err(err) = connection.execute(&command, &[]) {
@@ -114,8 +121,8 @@ fn add_new(req: Request, _params: Params) -> Result<impl IntoResponse> {
     connection.execute("COMMIT", &[]);
 
     let command = format!(
-        "INSERT INTO key_value (key, id, value) VALUES({:?}, {:?}, {:?}) RETURNING *;",
-        item.value, item.index.parse::<u32>().unwrap(), item.value2
+        "INSERT INTO key_value (key, id, value, command, parameter) VALUES({:?}, {:?}, {:?}, {:?}, {:?}) RETURNING *;",
+        item.value, item.index.parse::<u32>().unwrap(), item.value2, item.action, item.additional
     );
     if let core::result::Result::Err(err) = connection.execute(&command, &[]) {
         println!("error: {}", err);
@@ -232,8 +239,6 @@ fn add_server(req: Request, _params: Params) -> Result<impl IntoResponse> {
 }
 
 fn delete_from_server(_req: Request, params: Params) -> Result<impl IntoResponse> {
-    println!("delete from server");
-
     let Some(name) = params.get("name") else {
         return Ok(Response::new(404, "Missing identifier"));
     };
@@ -254,4 +259,25 @@ fn delete_from_server(_req: Request, params: Params) -> Result<impl IntoResponse
                 .build()
         }
     })
+}
+
+fn convert_from(field: &str, sql_chart: &str) -> Result<String> {
+    println!("convert_from");
+    println!("field: {:?} sql_chart: {:?}", field, sql_chart);
+    let connection = Connection::open_default()?;
+
+    let command = format!("SELECT server, id FROM {}", sql_chart);
+    let row_set = connection.execute(&command, &[]).unwrap();
+    let row_set = row_set
+        .rows
+        .iter()
+        .filter(|row| row.get::<&str>(0).unwrap() != String::from("VALUE"));
+    
+    let items = row_set
+        .map(|row| {
+            println!("row: {:?}", row);
+        }
+    );
+
+    Ok(String::new())
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io::BufReader};
+use std::{collections::HashMap, fs::File, io::BufReader, cmp::Ordering, hash::{Hash, Hasher}};
 
 use glob::glob;
 use quick_xml::{events::Event, Reader};
@@ -6,7 +6,64 @@ use rusqlite::{Connection, Result};
 use rust_xlsxwriter::Workbook;
 use table::Key;
 
-fn load_db() -> Vec<String> {
+fn convert_from(value_from_xml: &str, chart: &str) -> String {
+    let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
+    println!("value_from_xml: {:?}, chart: {:?}", value_from_xml, chart);
+    let command = &format!("SELECT * FROM {}", chart);
+    let mut row_stmt = connection.prepare(command).unwrap();
+
+    let mut rows = row_stmt.query([]).unwrap();
+    while let Some(row) = rows.next().unwrap() {
+        let value: u32 = row.get(1).unwrap();
+        if value_from_xml.contains(&value.to_string()) {
+            let name: String = row.get(0).unwrap();
+            return name
+        }
+    }
+
+    return String::from("Not found");
+}
+
+#[derive(Debug)]
+pub struct Attribute {
+    pub index: u32,
+    pub name: String,
+    pub command: String,
+    pub parameter: String,
+}
+
+impl Attribute {
+    pub fn new(index: u32, name: &str, command: &str, parameter: &str) -> Self {
+        Attribute {
+            index,
+            name: name.to_string(),
+            command: command.to_string(),
+            parameter: parameter.to_string(),
+        }
+    }
+}
+
+impl Ord for Attribute {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index.cmp(&other.index)
+    }
+}
+
+impl PartialOrd for Attribute {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Attribute{
+    fn eq(&self, other: &Self) -> bool {
+        (self.index, &self.name) == (other.index, &other.name)
+    }
+}
+
+impl Eq for Attribute { }
+
+fn load_db() -> Vec<Attribute> {
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
 
     let mut stmt = connection
@@ -15,27 +72,52 @@ fn load_db() -> Vec<String> {
 
     let mut rows = stmt.query([]).unwrap();
 
-    let mut names: Vec<(u32, String)> = Vec::new();
+    let mut names: Vec<Attribute> = Vec::new();
     while let Some(row) = rows.next().unwrap() {
         let index: u32 = row.get(1).unwrap();
-        names.push((index, row.get(0).unwrap()));
+        let name: String = row.get(0).unwrap();
+        let command: String = row.get(3).unwrap();
+        let parameter: String = row.get(4).unwrap();
+        names.push(Attribute::new(index, &name, &command, &parameter));
     }
 
-    names.sort_by(|a, b| a.0.cmp(&b.0));
+    names.sort_by(|a, b| a.cmp(&b));
     println!("{:?}", names);
 
-    let mut names_sorted = vec![];
-    for name in names {
-        names_sorted.push(name.1);
-    }
-
-    names_sorted
+    names
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Clone)]
 pub struct KeyMetadata {
     pub value: String,
     pub index: u32,
+    pub command: String,
+    pub parameter: String,
+}
+
+impl PartialEq for KeyMetadata{
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for KeyMetadata {}
+
+impl Hash for KeyMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+    }
+}
+
+impl KeyMetadata {
+    pub fn comparison_metadata(value: &str) -> Self {
+        Self {
+            value: value.to_string(),
+            index: 0,
+            command: String::new(),
+            parameter: String::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -49,11 +131,13 @@ impl KeysToFind {
         let mut keys_values = HashMap::new();
 
         for (counter, parameter) in parameters.iter().enumerate() {
-            if parameter.to_string() != String::from("VALUE") {
+            if parameter.name.to_string() != String::from("VALUE") {
                 keys_values.insert(
                     KeyMetadata {
-                        value: parameter.to_string(),
+                        value: parameter.name.to_string(),
                         index: counter.try_into().unwrap(),
+                        command: parameter.command.to_string(),
+                        parameter: parameter.parameter.to_string(),
                     },
                     String::new(),
                 );
@@ -74,12 +158,13 @@ impl KeysToFind {
     pub fn build_key_from_name(&self, key: &str) -> Option<KeyMetadata> {
         let mut key_iter: Vec<KeyMetadata> = self.keys_values.clone().into_keys().collect();
         key_iter.sort_by(|a, b| a.index.cmp(&b.index));
-
         for (counter, key_iter) in key_iter.iter().enumerate() {
             if key_iter.value == key.to_string() {
                 return Some(KeyMetadata {
                     value: key.to_string(),
                     index: counter.try_into().unwrap(),
+                    command: key_iter.command.to_string(),
+                    parameter: key_iter.parameter.to_string(),
                 });
             }
         }
@@ -146,6 +231,9 @@ fn write_to_excel() {
 }
 
 fn main() {
+    let mut methods: HashMap<&str, fn(&str, &str) -> String> = HashMap::new();
+    methods.insert("convert_from", convert_from);
+
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
 
     let mut files = Vec::new();
@@ -164,7 +252,6 @@ fn main() {
         let mut buf = Vec::new();
 
         let mut keys_to_find = KeysToFind::new();
-        println!("keys_to_find: {:?}", keys_to_find);
         let mut current_key = String::new();
 
         // Read XML events from the reader
@@ -181,7 +268,6 @@ fn main() {
                     // Process text content
                     if !current_key.is_empty() {
                         let text_content = e.unescape().unwrap();
-                        println!("{}: {}", current_key, text_content);
                         keys_to_find.update(&current_key, &text_content);
                         current_key = String::new();
                     }
@@ -199,18 +285,30 @@ fn main() {
         let mut keys = keys_to_find.keys();
         keys.sort_by(|a, b| a.index.cmp(&b.index));
 
-        for key in keys.iter() {
+        for key in keys.iter_mut() {
             if key.value != String::from("ID") {
-                command.push_str(&format!(", {:?}", keys_to_find.get_value(&key.value)));
+                let value;
+                if key.command != "None" && key.command != "" {
+                    value = match methods.get(key.command.as_str()) {
+                        Some(f) => f(&keys_to_find.get().get(key).unwrap(), &key.parameter),
+                        None => {
+                            println!("No such command");
+                            String::from("Unable to perform operation")
+                        },
+                    };
+                } else {
+                    value = keys_to_find.get_value(&key.value);
+                }
+                command.push_str(&format!(", {:?}", value));
             }
         }
-        println!("command: {:?}", command);
         command.push(')');
+        println!("command: {:?}", command);
 
         let mut stmt = connection
             .prepare(&command)
             .unwrap();
-        stmt.execute([]);
+        stmt.execute([]).unwrap();
     }
 
     write_to_excel();
