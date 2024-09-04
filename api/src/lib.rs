@@ -260,24 +260,3 @@ fn delete_from_server(_req: Request, params: Params) -> Result<impl IntoResponse
         }
     })
 }
-
-fn convert_from(field: &str, sql_chart: &str) -> Result<String> {
-    println!("convert_from");
-    println!("field: {:?} sql_chart: {:?}", field, sql_chart);
-    let connection = Connection::open_default()?;
-
-    let command = format!("SELECT server, id FROM {}", sql_chart);
-    let row_set = connection.execute(&command, &[]).unwrap();
-    let row_set = row_set
-        .rows
-        .iter()
-        .filter(|row| row.get::<&str>(0).unwrap() != String::from("VALUE"));
-    
-    let items = row_set
-        .map(|row| {
-            println!("row: {:?}", row);
-        }
-    );
-
-    Ok(String::new())
-}
