@@ -23,6 +23,7 @@ struct Item {
     index: String,
     value: String,
     value2: String,
+    data_type: String,
     action: String,
     additional: String,
 }
@@ -85,6 +86,7 @@ fn get_all(_r: Request, _p: Params) -> Result<impl IntoResponse> {
                 value,
                 value2,
                 index: String::new(),
+                data_type: String::new(),
                 action: String::new(),
                 additional: String::new(),
             }
@@ -121,8 +123,8 @@ fn add_new(req: Request, _params: Params) -> Result<impl IntoResponse> {
     connection.execute("COMMIT", &[]);
 
     let command = format!(
-        "INSERT INTO key_value (key, id, value, command, parameter) VALUES({:?}, {:?}, {:?}, {:?}, {:?}) RETURNING *;",
-        item.value, item.index.parse::<u32>().unwrap(), item.value2, item.action, item.additional
+        "INSERT INTO key_value (key, id, value, type, command, parameter) VALUES({:?}, {:?}, {:?}, {:?}, {:?}, {:?}) RETURNING *;",
+        item.value, item.index.parse::<u32>().unwrap(), item.value2, item.data_type, item.action, item.additional
     );
     if let core::result::Result::Err(err) = connection.execute(&command, &[]) {
         println!("error: {}", err);

@@ -32,15 +32,17 @@ fn convert_from(value_from_xml: &str, chart: &str) -> String {
 pub struct Attribute {
     pub index: u32,
     pub name: String,
+    pub data_type: String,
     pub command: String,
     pub parameter: String,
 }
 
 impl Attribute {
-    pub fn new(index: u32, name: &str, command: &str, parameter: &str) -> Self {
+    pub fn new(index: u32, name: &str, data_type: &str, command: &str, parameter: &str) -> Self {
         Attribute {
             index,
             name: name.to_string(),
+            data_type: data_type.to_string(),
             command: command.to_string(),
             parameter: parameter.to_string(),
         }
@@ -78,9 +80,10 @@ fn load_db() -> Vec<Attribute> {
     while let Some(row) = rows.next().unwrap() {
         let index: u32 = row.get(1).unwrap();
         let name: String = row.get(0).unwrap();
-        let command: String = row.get(3).unwrap();
-        let parameter: String = row.get(4).unwrap();
-        names.push(Attribute::new(index, &name, &command, &parameter));
+        let data_type: String = row.get(3).unwrap();
+        let command: String = row.get(4).unwrap();
+        let parameter: String = row.get(5).unwrap();
+        names.push(Attribute::new(index, &name, &data_type, &command, &parameter));
     }
 
     names.sort();
@@ -92,6 +95,7 @@ fn load_db() -> Vec<Attribute> {
 pub struct KeyMetadata {
     pub value: String,
     pub index: u32,
+    pub data_type: String,
     pub command: String,
     pub parameter: String,
 }
@@ -115,6 +119,7 @@ impl KeyMetadata {
         Self {
             value: value.to_string(),
             index: 0,
+            data_type: String::new(),
             command: String::new(),
             parameter: String::new(),
         }
@@ -137,6 +142,7 @@ impl KeysToFind {
                     KeyMetadata {
                         value: parameter.name.to_string(),
                         index: counter.try_into().unwrap(),
+                        data_type: parameter.data_type.to_string(),
                         command: parameter.command.to_string(),
                         parameter: parameter.parameter.to_string(),
                     },
@@ -164,6 +170,7 @@ impl KeysToFind {
                 return Some(KeyMetadata {
                     value: key.to_string(),
                     index: counter.try_into().unwrap(),
+                    data_type: key_iter.data_type.to_string(),
                     command: key_iter.command.to_string(),
                     parameter: key_iter.parameter.to_string(),
                 });
@@ -216,6 +223,8 @@ fn write_to_excel() {
     }
 
     let mut rows = row_stmt.query([]).unwrap();
+    let mut max_length = vec![];
+    max_length.resize(column_number.into(), 0);
     while let Some(row) = rows.next().unwrap() {
         let row_number: u32 = row.get(0).unwrap();
         for (index, _column) in columns_vec.iter().enumerate() {
@@ -223,10 +232,16 @@ fn write_to_excel() {
                 break;
             }
             let value: String = row.get(index + 1).unwrap();
+            if value.len() > max_length[index] {
+                max_length[index] = value.len();
+            }
             worksheet
                 .write(row_number, index.try_into().unwrap(), value)
                 .unwrap();
         }
+    }
+    for (index, column_len) in max_length.into_iter().enumerate() {
+        worksheet.set_column_width(index.try_into().unwrap(), column_len as u32).unwrap();
     }
 
     // Save the workbook

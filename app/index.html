@@ -18,16 +18,23 @@
         <h2>Add a new item to the list</h2>
         <form hx-post="/api/items" hx-ext="json-enc" hx-swap="none" hx-on::after-request="this.reset()">
             <input type="number" inputmode="numeric" id="index" name="index">
-            <input type="text" name="value" placeholder="Add Item" maxlength="36">
+            <input type="text" name="value" placeholder="Item" maxlength="36">
             <input type="text" name="value2" placeholder="Item name in chart" maxlength="36">
-            <input type="text" name="action" list="actionList">
+            <input type="text" style="float:right;" name="data_type" list="typeList", placeholder="String">
+                <datalist id="typeList">
+                <option value="String">  
+                <option value="Date">
+            </datalist>
+            <br>
+            <input type="text" name="action" list="actionList", placeholder="None">
                 <datalist id="actionList">
                 <option value="None">  
                 <option value="convert_from">
             </datalist>
-            <input type="text" name="additional" placeholder="additional parameter" maxlength="36">
+            <input style="float:left; margin-left: 190px;" type="text" name="additional" placeholder="additional parameter" maxlength="36">
             <button type="submit">Add</button>
         </form>
+        <h1>Servers</h1>
         <div hx-get="/api/servers" hx-trigger="load,newServer from:body" hx-target="#all-servers" hx-swap="innerHtml"> </div>
         <div id="all-servers" hx-confirm="Do you really want to delete this server?" hx-target="closest .server"
             hx-swap="outerHTML swap:1s">

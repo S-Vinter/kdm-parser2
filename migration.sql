@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS key_value (
   key TEXT NOT NULL PRIMARY KEY,
   ID INTEGER,
   value,
+  type,
   command,
   parameter,
   UNIQUE(ID)
