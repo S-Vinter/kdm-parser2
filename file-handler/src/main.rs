@@ -11,6 +11,8 @@ use quick_xml::{events::Event, Reader};
 use rusqlite::Connection;
 use rust_xlsxwriter::Workbook;
 
+use fallible_streaming_iterator::FallibleStreamingIterator;
+
 fn convert_from(value_from_xml: &str, chart: &str) -> String {
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
     let command = &format!("SELECT * FROM {}", chart);
@@ -114,18 +116,6 @@ impl Hash for KeyMetadata {
     }
 }
 
-impl KeyMetadata {
-    pub fn comparison_metadata(value: &str) -> Self {
-        Self {
-            value: value.to_string(),
-            index: 0,
-            data_type: String::new(),
-            command: String::new(),
-            parameter: String::new(),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct KeysToFind {
     keys_values: HashMap<KeyMetadata, String>,
@@ -162,7 +152,7 @@ impl KeysToFind {
         false
     }
 
-    pub fn build_key_from_name(&self, key: &str) -> Option<KeyMetadata> {
+    pub fn get_metadata_by_value(&self, key: &str) -> Option<KeyMetadata> {
         let mut key_iter: Vec<KeyMetadata> = self.keys_values.clone().into_keys().collect();
         key_iter.sort_by(|a, b| a.index.cmp(&b.index));
         for (counter, key_iter) in key_iter.iter().enumerate() {
@@ -180,8 +170,10 @@ impl KeysToFind {
     }
 
     pub fn update(&mut self, key: &str, value: &str) {
-        self.keys_values
-            .insert(self.build_key_from_name(key).unwrap(), value.to_string());
+        if self.contains_key(key) {
+            self.keys_values
+                .insert(self.get_metadata_by_value(key).unwrap(), value.to_string());
+        }
     }
 
     pub fn get(&self) -> &HashMap<KeyMetadata, String> {
@@ -189,14 +181,12 @@ impl KeysToFind {
     }
 
     pub fn get_value(&self, key: &str) -> String {
-        let full_key = self.build_key_from_name(key).unwrap();
+        let full_key = self.get_metadata_by_value(key).unwrap();
         self.keys_values.get(&full_key).unwrap().to_string()
     }
 
-    pub fn keys(&self) -> Vec<&KeyMetadata> {
-        let mut keys: Vec<&KeyMetadata> = self.keys_values.keys().collect();
-        keys.sort_by(|a, b| a.index.cmp(&b.index));
-        keys
+    pub fn keys(mut self) -> Vec<(KeyMetadata, String)> {//std::collections::hash_map::IntoValues<KeyMetadata, String> {
+        self.keys_values.drain().collect()
     }
 }
 
@@ -212,14 +202,17 @@ fn write_to_excel() {
     let mut column_stmt = connection.prepare("SELECT * FROM key_value").unwrap();
     let mut row_stmt = connection.prepare("SELECT * FROM ITEMS").unwrap();
 
+    let columns_names = column_stmt.query([]).unwrap();
+    let column_number = columns_names.count().unwrap();
+
+    let mut columns_vec = Vec::with_capacity(column_number);
+    columns_vec.resize(column_number, String::new());
     let mut columns_names = column_stmt.query([]).unwrap();
-    let mut columns_vec = vec![];
-    let mut column_number = 0;
     while let Some(row) = columns_names.next().unwrap() {
+        let index: usize = row.get(1).unwrap();
         let value: String = row.get(2).unwrap();
-        columns_vec.push(value.clone());
-        worksheet.write(0, column_number, value).unwrap();
-        column_number += 1;
+        columns_vec.insert(index-1, value.clone());
+        worksheet.write(0, (index-1).try_into().unwrap(), value).unwrap();
     }
 
     let mut rows = row_stmt.query([]).unwrap();
@@ -228,7 +221,7 @@ fn write_to_excel() {
     while let Some(row) = rows.next().unwrap() {
         let row_number: u32 = row.get(0).unwrap();
         for (index, _column) in columns_vec.iter().enumerate() {
-            if index == columns_vec.len() {
+            if index == column_number {
                 break;
             }
             let value: String = row.get(index + 1).unwrap();
@@ -299,22 +292,24 @@ fn main() {
             buf.clear();
         }
 
-        let mut command = format!("INSERT OR IGNORE INTO ITEMS VALUES ({}", counter + 1);
-        let mut keys = keys_to_find.keys();
-        keys.sort_by(|a, b| a.index.cmp(&b.index));
+        let mut command = format!("INSERT OR REPLACE INTO ITEMS VALUES ({}", counter + 1);
+        let mut keys: Vec<(KeyMetadata, String)> = keys_to_find.keys();
+        keys.sort_by(|a, b| a.0.index.cmp(&b.0.index));
 
         for key in keys.iter_mut() {
-            if key.value != *"ID" {
-                let value = if key.command != "None" && !key.command.is_empty() {
-                    match methods.get(key.command.as_str()) {
-                        Some(f) => f(keys_to_find.get().get(key).unwrap(), &key.parameter),
+            if key.0.value != *"ID" {
+                let value = if key.0.command != "None" && !key.0.command.is_empty() {
+                    match methods.get(key.0.command.as_str()) {
+                        Some(f) => {
+                            f(&key.1, &key.0.parameter)
+                        },
                         None => {
                             println!("No such command");
                             String::from("Unable to perform operation")
                         }
                     }
                 } else {
-                    keys_to_find.get_value(&key.value)
+                    key.1.to_string()
                 };
                 command.push_str(&format!(", {:?}", value));
             }
