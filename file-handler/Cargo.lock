@@ -132,6 +132,7 @@ dependencies = [
  "quick-xml",
  "rusqlite",
  "rust_xlsxwriter",
+ "thiserror",
 ]
 
 [[package]]

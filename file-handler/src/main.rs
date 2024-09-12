@@ -1,17 +1,14 @@
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    fs::File,
-    hash::{Hash, Hasher},
-    io::BufReader,
-};
+use std::{collections::HashMap, fs::File, io::BufReader};
 
+use fallible_streaming_iterator::FallibleStreamingIterator;
 use glob::glob;
 use quick_xml::{events::Event, Reader};
 use rusqlite::Connection;
 use rust_xlsxwriter::Workbook;
 
-use fallible_streaming_iterator::FallibleStreamingIterator;
+use file_handler::{KeyMetadata, KeysToFind};
+
+use file_handler::Result;
 
 fn convert_from(value_from_xml: &str, chart: &str) -> String {
     let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
@@ -30,231 +27,71 @@ fn convert_from(value_from_xml: &str, chart: &str) -> String {
     String::from("Not found")
 }
 
-#[derive(Debug)]
-pub struct Attribute {
-    pub index: u32,
-    pub name: String,
-    pub data_type: String,
-    pub command: String,
-    pub parameter: String,
-}
-
-impl Attribute {
-    pub fn new(index: u32, name: &str, data_type: &str, command: &str, parameter: &str) -> Self {
-        Attribute {
-            index,
-            name: name.to_string(),
-            data_type: data_type.to_string(),
-            command: command.to_string(),
-            parameter: parameter.to_string(),
-        }
-    }
-}
-
-impl Ord for Attribute {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.index.cmp(&other.index)
-    }
-}
-
-impl PartialOrd for Attribute {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Attribute {
-    fn eq(&self, other: &Self) -> bool {
-        (self.index, &self.name) == (other.index, &other.name)
-    }
-}
-
-impl Eq for Attribute {}
-
-fn load_db() -> Vec<Attribute> {
-    let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
-
-    let mut stmt = connection.prepare("SELECT * FROM key_value").unwrap();
-
-    let mut rows = stmt.query([]).unwrap();
-
-    let mut names: Vec<Attribute> = Vec::new();
-    while let Some(row) = rows.next().unwrap() {
-        let index: u32 = row.get(1).unwrap();
-        let name: String = row.get(0).unwrap();
-        let data_type: String = row.get(3).unwrap();
-        let command: String = row.get(4).unwrap();
-        let parameter: String = row.get(5).unwrap();
-        names.push(Attribute::new(index, &name, &data_type, &command, &parameter));
-    }
-
-    names.sort();
-
-    names
-}
-
-#[derive(Debug, Clone)]
-pub struct KeyMetadata {
-    pub value: String,
-    pub index: u32,
-    pub data_type: String,
-    pub command: String,
-    pub parameter: String,
-}
-
-impl PartialEq for KeyMetadata {
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
-    }
-}
-
-impl Eq for KeyMetadata {}
-
-impl Hash for KeyMetadata {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.value.hash(state);
-    }
-}
-
-#[derive(Debug)]
-pub struct KeysToFind {
-    keys_values: HashMap<KeyMetadata, String>,
-}
-
-impl KeysToFind {
-    pub fn new() -> Self {
-        let parameters = load_db();
-        let mut keys_values = HashMap::new();
-
-        for (counter, parameter) in parameters.iter().enumerate() {
-            if parameter.name != *"VALUE" {
-                keys_values.insert(
-                    KeyMetadata {
-                        value: parameter.name.to_string(),
-                        index: counter.try_into().unwrap(),
-                        data_type: parameter.data_type.to_string(),
-                        command: parameter.command.to_string(),
-                        parameter: parameter.parameter.to_string(),
-                    },
-                    String::new(),
-                );
-            }
-        }
-        Self { keys_values }
-    }
-
-    pub fn contains_key(&self, key: &str) -> bool {
-        for key_iter in self.keys_values.iter() {
-            if key_iter.0.value == *key {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn get_metadata_by_value(&self, key: &str) -> Option<KeyMetadata> {
-        let mut key_iter: Vec<KeyMetadata> = self.keys_values.clone().into_keys().collect();
-        key_iter.sort_by(|a, b| a.index.cmp(&b.index));
-        for (counter, key_iter) in key_iter.iter().enumerate() {
-            if key_iter.value == *key {
-                return Some(KeyMetadata {
-                    value: key.to_string(),
-                    index: counter.try_into().unwrap(),
-                    data_type: key_iter.data_type.to_string(),
-                    command: key_iter.command.to_string(),
-                    parameter: key_iter.parameter.to_string(),
-                });
-            }
-        }
-        None
-    }
-
-    pub fn update(&mut self, key: &str, value: &str) {
-        if self.contains_key(key) {
-            self.keys_values
-                .insert(self.get_metadata_by_value(key).unwrap(), value.to_string());
-        }
-    }
-
-    pub fn get(&self) -> &HashMap<KeyMetadata, String> {
-        &self.keys_values
-    }
-
-    pub fn get_value(&self, key: &str) -> String {
-        let full_key = self.get_metadata_by_value(key).unwrap();
-        self.keys_values.get(&full_key).unwrap().to_string()
-    }
-
-    pub fn keys(mut self) -> Vec<(KeyMetadata, String)> {//std::collections::hash_map::IntoValues<KeyMetadata, String> {
-        self.keys_values.drain().collect()
-    }
-}
-
-fn write_to_excel() {
+fn write_to_excel() -> Result<()> {
     // Create a new workbook
     let mut workbook = Workbook::new();
 
     // Add a worksheet
     let worksheet = workbook.add_worksheet();
 
-    let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
+    let connection = Connection::open("../.spin/sqlite_db.db")?;
 
-    let mut column_stmt = connection.prepare("SELECT * FROM key_value").unwrap();
-    let mut row_stmt = connection.prepare("SELECT * FROM ITEMS").unwrap();
+    let mut column_stmt = connection.prepare("SELECT * FROM key_value")?;
+    let mut row_stmt = connection.prepare("SELECT * FROM ITEMS")?;
 
-    let columns_names = column_stmt.query([]).unwrap();
-    let column_number = columns_names.count().unwrap();
+    let columns_names = column_stmt.query([])?;
+    let column_number = columns_names.count()?;
+    let mut max_length = vec![0; column_number];
+    max_length.resize(column_number, 0);
 
     let mut columns_vec = Vec::with_capacity(column_number);
     columns_vec.resize(column_number, String::new());
-    let mut columns_names = column_stmt.query([]).unwrap();
-    while let Some(row) = columns_names.next().unwrap() {
-        let index: usize = row.get(1).unwrap();
-        let value: String = row.get(2).unwrap();
-        columns_vec.insert(index-1, value.clone());
-        worksheet.write(0, (index-1).try_into().unwrap(), value).unwrap();
+    let mut columns_names = column_stmt.query([])?;
+    while let Some(row) = columns_names.next()? {
+        let index: usize = row.get(1)?;
+        let value: String = row.get(2)?;
+        max_length[index - 1] = value.len();
+        columns_vec.insert(index - 1, value.clone());
+        worksheet.write(0, (index - 1).try_into()?, value)?;
     }
 
-    let mut rows = row_stmt.query([]).unwrap();
-    let mut max_length = vec![];
-    max_length.resize(column_number.into(), 0);
-    while let Some(row) = rows.next().unwrap() {
-        let row_number: u32 = row.get(0).unwrap();
+    let mut rows = row_stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let row_number: u32 = row.get(0)?;
         for (index, _column) in columns_vec.iter().enumerate() {
             if index == column_number {
                 break;
             }
-            let value: String = row.get(index + 1).unwrap();
+            let value: String = row.get(index + 1)?;
             if value.len() > max_length[index] {
                 max_length[index] = value.len();
             }
-            worksheet
-                .write(row_number, index.try_into().unwrap(), value)
-                .unwrap();
+            worksheet.write(row_number, index.try_into()?, value)?;
         }
     }
     for (index, column_len) in max_length.into_iter().enumerate() {
-        worksheet.set_column_width(index.try_into().unwrap(), column_len as u32).unwrap();
+        worksheet.set_column_width(index.try_into()?, column_len as u32)?;
     }
 
     // Save the workbook
-    workbook.save("kdm-info.xlsx").unwrap();
+    workbook.save("kdm-info.xlsx")?;
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<()> {
     let mut methods: HashMap<&str, fn(&str, &str) -> String> = HashMap::new();
     methods.insert("convert_from", convert_from);
 
-    let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
+    let connection = Connection::open("../.spin/sqlite_db.db")?;
 
     let mut files = Vec::new();
     // Open the XML file
     for file in glob("/home/shiri/Downloads/*.xml").expect("Failed to read glob pattern") {
-        files.push(file.unwrap());
+        files.push(file?);
     }
 
     for (counter, file) in files.iter().enumerate() {
-        let file = BufReader::new(File::open(file).unwrap());
+        let file = BufReader::new(File::open(file)?);
 
         // Create a new XML reader
         let mut reader = Reader::from_reader(file);
@@ -262,7 +99,7 @@ fn main() {
         // Buffer to hold XML data
         let mut buf = Vec::new();
 
-        let mut keys_to_find = KeysToFind::new();
+        let mut keys_to_find = KeysToFind::new()?;
         let mut current_key = String::new();
 
         // Read XML events from the reader
@@ -278,8 +115,8 @@ fn main() {
                 Ok(Event::Text(e)) => {
                     // Process text content
                     if !current_key.is_empty() {
-                        let text_content = e.unescape().unwrap();
-                        keys_to_find.update(&current_key, &text_content);
+                        let text_content = e.unescape()?;
+                        keys_to_find.update(&current_key, &text_content)?;
                         current_key = String::new();
                     }
                 }
@@ -300,9 +137,7 @@ fn main() {
             if key.0.value != *"ID" {
                 let value = if key.0.command != "None" && !key.0.command.is_empty() {
                     match methods.get(key.0.command.as_str()) {
-                        Some(f) => {
-                            f(&key.1, &key.0.parameter)
-                        },
+                        Some(f) => f(&key.1, &key.0.parameter),
                         None => {
                             println!("No such command");
                             String::from("Unable to perform operation")
@@ -316,9 +151,10 @@ fn main() {
         }
         command.push(')');
 
-        let mut stmt = connection.prepare(&command).unwrap();
-        stmt.execute([]).unwrap();
+        let mut stmt = connection.prepare(&command)?;
+        stmt.execute([])?;
     }
 
-    write_to_excel();
+    write_to_excel()?;
+    Ok(())
 }
