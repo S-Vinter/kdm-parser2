@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io::BufReader};
+use std::{fs::File, io::BufReader};
 
 use fallible_streaming_iterator::FallibleStreamingIterator;
 use glob::glob;
@@ -6,26 +6,7 @@ use quick_xml::{events::Event, Reader};
 use rusqlite::Connection;
 use rust_xlsxwriter::Workbook;
 
-use file_handler::{KeyMetadata, KeysToFind};
-
-use file_handler::Result;
-
-fn convert_from(value_from_xml: &str, chart: &str) -> String {
-    let connection = Connection::open("../.spin/sqlite_db.db").unwrap();
-    let command = &format!("SELECT * FROM {}", chart);
-    let mut row_stmt = connection.prepare(command).unwrap();
-
-    let mut rows = row_stmt.query([]).unwrap();
-    while let Some(row) = rows.next().unwrap() {
-        let value: u32 = row.get(1).unwrap();
-        if value_from_xml.contains(&value.to_string()) {
-            let name: String = row.get(0).unwrap();
-            return name;
-        }
-    }
-
-    String::from("Not found")
-}
+use file_handler::{KeyMetadata, KeysToFind, Result};
 
 fn write_to_excel() -> Result<()> {
     // Create a new workbook
@@ -79,9 +60,6 @@ fn write_to_excel() -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    let mut methods: HashMap<&str, fn(&str, &str) -> String> = HashMap::new();
-    methods.insert("convert_from", convert_from);
-
     let connection = Connection::open("../.spin/sqlite_db.db")?;
 
     let mut files = Vec::new();
@@ -134,20 +112,8 @@ fn main() -> Result<()> {
         keys.sort_by(|a, b| a.0.index.cmp(&b.0.index));
 
         for key in keys.iter_mut() {
-            if key.0.value != *"ID" {
-                let value = if key.0.command != "None" && !key.0.command.is_empty() {
-                    match methods.get(key.0.command.as_str()) {
-                        Some(f) => f(&key.1, &key.0.parameter),
-                        None => {
-                            println!("No such command");
-                            String::from("Unable to perform operation")
-                        }
-                    }
-                } else {
-                    key.1.to_string()
-                };
-                command.push_str(&format!(", {:?}", value));
-            }
+            let value = key.0.parse_output(&key.1)?;
+            command.push_str(&format!(", {:?}", value));
         }
         command.push(')');
 
